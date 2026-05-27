@@ -33,6 +33,9 @@ jobs:
       - name: Set package.json version
         run: npm version "${{ steps.version.outputs.version }}" --no-git-tag-version
       - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run typecheck
       - run: npm run test
       - run: npm run build
       - name: Publish
