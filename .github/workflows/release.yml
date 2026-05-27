@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - name: Update npm
+        run: npm install -g npm@latest
+      - name: Extract and validate version from tag
+        id: version
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "Invalid tag format: $TAG"
+            exit 1
+          fi
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+      - name: Set package.json version
+        run: npm version "${{ steps.version.outputs.version }}" --no-git-tag-version
+      - run: npm ci
+      - run: npm run test
+      - run: npm run build
+      - name: Publish
+        run: npm publish --access public --provenance
