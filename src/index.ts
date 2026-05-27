@@ -4,4 +4,5 @@ export {
   EdifactFormatVersion,
   getCurrentEdifactFormatVersion,
   getEdifactFormatVersion,
+  getEdifactFormatVersionValidFrom,
 } from "./edifact_format_version";
