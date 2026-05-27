@@ -18,6 +18,11 @@ describe("getFormatOfPruefidentifikator", () => {
     expect(() => getFormatOfPruefidentifikator(pruefi)).toThrow(Error);
   });
 
+  it.each([null, undefined])("throws for nullish input %s", (pruefi) => {
+    // mirrors Python's None test — guards against untyped JS callers
+    expect(() => getFormatOfPruefidentifikator(pruefi as unknown as string)).toThrow(Error);
+  });
+
   it("throws with descriptive message for unmapped pruefi", () => {
     expect(() => getFormatOfPruefidentifikator("10000")).toThrow(
       "No Edifact format was found for pruefidentifikator"
