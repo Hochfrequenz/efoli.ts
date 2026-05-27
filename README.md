@@ -43,16 +43,16 @@ import {
 } from "@hochfrequenz/efoli";
 
 // Derive the EDIFACT format from a Prüfidentifikator
-const format = getFormatOfPruefidentifikator("55001"); // EdifactFormat.UTILMDS
+const format: EdifactFormat = getFormatOfPruefidentifikator("55001"); // EdifactFormat.UTILMDS
 
-// Derive the format version for a specific date
-const version = getEdifactFormatVersion(new Date("2024-01-01")); // EdifactFormatVersion.FV2310
+// Derive the format version for a specific date (UTC timestamp)
+const version: EdifactFormatVersion = getEdifactFormatVersion(new Date("2024-01-01T00:00:00Z")); // EdifactFormatVersion.FV2310
 
-// Or pass a plain calendar date (interpreted as midnight Europe/Berlin)
-const version2 = getEdifactFormatVersion({ year: 2025, month: 6, day: 6 }); // EdifactFormatVersion.FV2504
+// Or pass a plain calendar date (interpreted as midnight Europe/Berlin — preferred for date-only inputs)
+const version2: EdifactFormatVersion = getEdifactFormatVersion({ year: 2025, month: 6, day: 6 }); // EdifactFormatVersion.FV2504
 
 // Get the currently active format version
-const current = getCurrentEdifactFormatVersion();
+const current: EdifactFormatVersion = getCurrentEdifactFormatVersion();
 ```
 
 ## Setup for Local Development
