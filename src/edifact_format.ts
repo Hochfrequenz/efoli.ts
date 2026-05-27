@@ -56,9 +56,7 @@ export function getFormatOfPruefidentifikator(pruefidentifikator: string): Edifa
   const prefix = pruefidentifikator.slice(0, 2);
   const format = edifactMapping[prefix];
   if (format === undefined) {
-    throw new Error(
-      `No Edifact format was found for pruefidentifikator '${pruefidentifikator}'.`
-    );
+    throw new Error(`No Edifact format was found for pruefidentifikator '${pruefidentifikator}'.`);
   }
   return format;
 }

@@ -32,9 +32,7 @@ function calendarDateToBerlinMidnight(date: CalendarDate): Date {
   );
   // At 12:00 UTC, Berlin shows 13 (CET/+1) or 14 (CEST/+2) — offset is berlinHour - 12
   const offsetHours = berlinHour - 12;
-  return new Date(
-    Date.UTC(date.year, date.month - 1, date.day, 0, 0, 0) - offsetHours * 3_600_000
-  );
+  return new Date(Date.UTC(date.year, date.month - 1, date.day, 0, 0, 0) - offsetHours * 3_600_000);
 }
 
 // Each entry is [exclusive upper threshold UTC, version valid below that threshold].
