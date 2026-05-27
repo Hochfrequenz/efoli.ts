@@ -25,11 +25,12 @@ jobs:
         id: version
         run: |
           TAG="${{ github.ref_name }}"
-          if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+          VERSION="${TAG#v}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
             echo "Invalid tag format: $TAG"
             exit 1
           fi
-          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - name: Set package.json version
         run: npm version "${{ steps.version.outputs.version }}" --no-git-tag-version
       - run: npm ci
