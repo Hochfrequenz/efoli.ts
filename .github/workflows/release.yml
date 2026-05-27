@@ -13,15 +13,18 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: "npm"
+          registry-url: "https://registry.npmjs.org"
       - name: Update npm to latest
-        # Node 22 ships with npm v10; OIDC Trusted Publishing requires npm >= 11.5.1
-        run: npm install -g npm@11
+        run: |
+          npm install -g npm@latest
+          echo "npm version: $(npm --version)"
+          echo "node version: $(node --version)"
       - name: Extract version from tag
         id: version
         run: |
