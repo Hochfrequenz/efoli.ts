@@ -19,12 +19,9 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
-          registry-url: "https://registry.npmjs.org"
       - name: Update npm to latest
-        run: |
-          npm install -g npm@latest
-          echo "npm version: $(npm --version)"
-          echo "node version: $(node --version)"
+        # Node 22 ships with npm v10; OIDC Trusted Publishing requires npm >= 11.5.1
+        run: npm install -g npm@11
       - name: Extract version from tag
         id: version
         run: |
