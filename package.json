@@ -26,6 +26,11 @@
     "format": "prettier --write .",
     "prepack": "npm run build"
   },
+  "keywords": ["edifact", "german-utilities", "enums", "format-versions", "mako"],
+  "homepage": "https://github.com/Hochfrequenz/efoli.ts#readme",
+  "bugs": {
+    "url": "https://github.com/Hochfrequenz/efoli.ts/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Hochfrequenz/efoli.ts.git"
