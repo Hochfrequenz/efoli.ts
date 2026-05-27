@@ -4,6 +4,7 @@ import {
   EdifactFormatVersion,
   getCurrentEdifactFormatVersion,
   getEdifactFormatVersion,
+  getEdifactFormatVersionLabel,
   getEdifactFormatVersionValidFrom,
 } from "../../src/edifact_format_version";
 
@@ -68,6 +69,24 @@ describe("getCurrentEdifactFormatVersion", () => {
   it("returns a valid EdifactFormatVersion member", () => {
     const result = getCurrentEdifactFormatVersion();
     expect(Object.values(EdifactFormatVersion)).toContain(result);
+  });
+});
+
+describe("getEdifactFormatVersionLabel", () => {
+  it.each([
+    [EdifactFormatVersion.FV2104, "April 2021"],
+    [EdifactFormatVersion.FV2110, "Oktober 2021"],
+    [EdifactFormatVersion.FV2210, "Oktober 2022"],
+    [EdifactFormatVersion.FV2304, "April 2023"],
+    [EdifactFormatVersion.FV2310, "Oktober 2023"],
+    [EdifactFormatVersion.FV2404, "April 2024"],
+    [EdifactFormatVersion.FV2410, "Oktober 2024"],
+    [EdifactFormatVersion.FV2504, "Juni 2025"],
+    [EdifactFormatVersion.FV2510, "Oktober 2025"],
+    [EdifactFormatVersion.FV2604, "April 2026"],
+    [EdifactFormatVersion.FV2610, "Oktober 2026"],
+  ])("returns correct label for %s", (version, expected) => {
+    expect(getEdifactFormatVersionLabel(version)).toBe(expected);
   });
 });
 

@@ -86,6 +86,25 @@ const VALID_FROM_MAP: Map<EdifactFormatVersion, CalendarDate> = (() => {
   return map;
 })();
 
+const FORMAT_VERSION_LABELS: Record<EdifactFormatVersion, string> = {
+  [EdifactFormatVersion.FV2104]: "April 2021",
+  [EdifactFormatVersion.FV2110]: "Oktober 2021",
+  [EdifactFormatVersion.FV2210]: "Oktober 2022",
+  [EdifactFormatVersion.FV2304]: "April 2023",
+  [EdifactFormatVersion.FV2310]: "Oktober 2023",
+  [EdifactFormatVersion.FV2404]: "April 2024",
+  [EdifactFormatVersion.FV2410]: "Oktober 2024",
+  [EdifactFormatVersion.FV2504]: "Juni 2025",
+  [EdifactFormatVersion.FV2510]: "Oktober 2025",
+  [EdifactFormatVersion.FV2604]: "April 2026",
+  [EdifactFormatVersion.FV2610]: "Oktober 2026",
+};
+
+/** Returns a human-readable German label for the given format version, e.g. "Oktober 2025 (FV2510)". */
+export function getEdifactFormatVersionLabel(version: EdifactFormatVersion): string {
+  return FORMAT_VERSION_LABELS[version];
+}
+
 /**
  * Returns the EdifactFormatVersion applicable for the given key date.
  * Accepts a UTC Date (compared as-is) or a CalendarDate (treated as midnight Europe/Berlin).
