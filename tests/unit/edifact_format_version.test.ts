@@ -266,13 +266,39 @@ describe("rejecting key dates that cannot denote a real instant", () => {
     }
   );
 
-  it("does not mistake a Symbol.toStringTag spoof for a Date", () => {
-    // Object.prototype.toString can be spoofed, and such an object used to reach
-    // keyDate.getTime() and raise "TypeError: keyDate.getTime is not a function", bypassing
-    // every validation message here.
-    const spoof = { [Symbol.toStringTag]: "Date" } as unknown as CalendarDate;
-    expect(Object.prototype.toString.call(spoof)).toBe("[object Date]");
-    expect(() => getEdifactFormatVersion(spoof)).toThrow(/year must be an integer/);
+  // Factories, not values: vitest's %s interpolation inspects the argument, and loupe calls
+  // toJSON on anything tagged "[object Date]", which these spoofs do not have.
+  it.each([
+    ["no getTime", () => ({ [Symbol.toStringTag]: "Date" })],
+    ["a callable getTime", () => ({ [Symbol.toStringTag]: "Date", getTime: () => 0 })],
+    [
+      "getTime and valueOf",
+      () => ({ [Symbol.toStringTag]: "Date", getTime: () => 0, valueOf: () => 0 }),
+    ],
+    ["Date.prototype but no [[DateValue]] slot", () => Object.create(Date.prototype)],
+  ])("does not mistake a Date-like spoof with %s for a Date", (_label, makeSpoof) => {
+    // Two earlier attempts at this predicate both failed. The object tag is spoofable via
+    // Symbol.toStringTag: with no getTime, such a value reached keyDate.getTime() and raised a
+    // raw "TypeError: getTime is not a function"; with a callable getTime it was treated as a
+    // Date outright, and since `<` then falls back to valueOf and coerces to strings, a spoof
+    // reporting 1970 answered FV2704 instead of FV2104 - the original saturation bug, reborn.
+    // Only the [[DateValue]] internal slot is a real brand.
+    expect(() => getEdifactFormatVersion(makeSpoof() as unknown as CalendarDate)).toThrow(
+      /expected a Date or a CalendarDate|must be an integer/
+    );
+  });
+
+  it("reads the time through Date.prototype, ignoring an overridden getTime", () => {
+    // A Date subclass is a real Date, so it is accepted - but what it reports about itself must
+    // not decide the answer: this instance claims 1970 while really being 2027-04-01.
+    class LyingDate extends Date {
+      override getTime(): number {
+        return 0;
+      }
+    }
+    const lying = new LyingDate("2027-04-01T00:00:00Z");
+    expect(lying.getTime()).toBe(0);
+    expect(getEdifactFormatVersion(lying)).toBe(EdifactFormatVersion.FV2704);
   });
 
   it("accepts a Date built in another realm", () => {

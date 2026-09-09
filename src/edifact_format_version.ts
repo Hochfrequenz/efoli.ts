@@ -21,20 +21,30 @@ export enum EdifactFormatVersion {
 export type CalendarDate = { year: number; month: number; day: number };
 
 /**
- * True for a Date from any realm. `instanceof Date` is false for a Date built in another realm
- * (a vm context, an iframe), which would send a perfectly valid Date down the CalendarDate path
- * and reject it with a message about calendar integers.
- *
- * The object tag alone is not enough: `Symbol.toStringTag` can spoof it, and such an object would
- * then reach `keyDate.getTime()` and raise `TypeError: keyDate.getTime is not a function`,
- * bypassing the validation messages below. Requiring a callable getTime keeps a spoof on the
- * CalendarDate path, where it is reported like any other malformed input.
+ * Reads a Date's time through Date.prototype, so that an instance overriding getTime or valueOf
+ * cannot change what this module compares against the thresholds.
+ */
+function dateTime(value: Date): number {
+  return Date.prototype.getTime.call(value);
+}
+
+/**
+ * True only for a real Date, from any realm. Date.prototype.getTime throws unless the receiver
+ * carries the internal [[DateValue]] slot, which is exactly the brand we need:
+ * - `instanceof Date` is false for a Date built in another realm (a vm context, an iframe), which
+ *   would send a perfectly valid Date down the CalendarDate path.
+ * - The object tag is spoofable via Symbol.toStringTag, and a spoof that also defines a callable
+ *   getTime would be treated as a Date. It has no [[DateValue]] slot, so `<` against a threshold
+ *   falls back to valueOf and coerces both sides to strings: `{ getTime: () => 0 }` compared as
+ *   1970 answered FV2704 instead of FV2104. That is the original saturation bug, reintroduced.
  */
 function isDate(value: unknown): value is Date {
-  return (
-    Object.prototype.toString.call(value) === "[object Date]" &&
-    typeof (value as Date).getTime === "function"
-  );
+  try {
+    Date.prototype.getTime.call(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -232,15 +242,19 @@ export function getEdifactFormatVersionLabel(version: EdifactFormatVersion): str
  * whose year is outside 1-9999, or that does not denote a real date.
  */
 export function getEdifactFormatVersion(keyDate: Date | CalendarDate): EdifactFormatVersion {
-  if (isDate(keyDate) && Number.isNaN(keyDate.getTime())) {
+  if (isDate(keyDate) && Number.isNaN(dateTime(keyDate))) {
     // An Invalid Date's time is NaN, and every `<` comparison against NaN is false, so without
     // this guard the loop below falls through and returns the newest format version. That borrows
     // the saturation answer, whose whole point is to mean "beyond what this release knows".
     throw new Error("Invalid Date: the key date is not a valid point in time");
   }
-  const utcDate = isDate(keyDate) ? keyDate : calendarDateToBerlinMidnight(keyDate);
+  // Compared as numbers rather than as Dates: `<` on objects goes through valueOf, which an
+  // instance can override, and which silently coerces a non-Date to a string.
+  const utcTime = isDate(keyDate)
+    ? dateTime(keyDate)
+    : dateTime(calendarDateToBerlinMidnight(keyDate));
   for (const [threshold, version] of FORMAT_VERSION_THRESHOLDS) {
-    if (utcDate < threshold) {
+    if (utcTime < dateTime(threshold)) {
       return version;
     }
   }
