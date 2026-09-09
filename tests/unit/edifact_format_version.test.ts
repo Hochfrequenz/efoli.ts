@@ -1,3 +1,5 @@
+import { runInNewContext } from "node:vm";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -96,6 +98,14 @@ describe("getEdifactFormatVersionValidFrom", () => {
   it("throws for FV2104 (earliest version, no defined start date)", () => {
     expect(() => getEdifactFormatVersionValidFrom(EdifactFormatVersion.FV2104)).toThrow(Error);
   });
+
+  it("throws a readable error for a symbol", () => {
+    // Same coercion trap as the label lookup: interpolating a symbol raises "Cannot convert a
+    // Symbol value to a string" instead of naming the unknown format version.
+    expect(() =>
+      getEdifactFormatVersionValidFrom(Symbol("nope") as unknown as EdifactFormatVersion)
+    ).toThrow(/Start date for/);
+  });
 });
 
 describe("getCurrentEdifactFormatVersion", () => {
@@ -193,5 +203,191 @@ describe("enum and threshold invariants", () => {
     for (const version of ALL_VERSIONS) {
       expect(getEdifactFormatVersionLabel(version)).toMatch(/^\S+ \d{4}$/);
     }
+  });
+});
+
+describe("rejecting key dates that cannot denote a real instant", () => {
+  it("throws for an Invalid Date instead of saturating to the newest version", () => {
+    // The regression this guards: an Invalid Date's time is NaN, every `<` against NaN is false,
+    // so the threshold loop used to fall through and return the newest format version - borrowing
+    // the saturation answer, which is supposed to mean "beyond what this release knows".
+    expect(() => getEdifactFormatVersion(new Date("nonsense"))).toThrow(/Invalid Date/);
+    expect(() => getEdifactFormatVersion(new Date(NaN))).toThrow(/Invalid Date/);
+  });
+
+  it.each([
+    ["month 13 would normalize to January of the next year", { year: 2027, month: 13, day: 1 }],
+    ["April 31st would normalize to May 1st", { year: 2027, month: 4, day: 31 }],
+    ["month 0 would normalize to December of the previous year", { year: 2027, month: 0, day: 1 }],
+    ["day 0 would normalize to the last day of March", { year: 2027, month: 4, day: 0 }],
+    ["2027 is not a leap year", { year: 2027, month: 2, day: 29 }],
+  ])("throws for a CalendarDate that is not a real date: %s", (_label, keyDate) => {
+    expect(() => getEdifactFormatVersion(keyDate)).toThrow(/is not a real date/);
+  });
+
+  it.each([
+    [{ year: 2027, month: 4, day: NaN }, "day"],
+    [{ year: 2027, month: 4, day: 1.5 }, "day"],
+    [{ year: 2027, month: 4.5, day: 1 }, "month"],
+    [{ year: NaN, month: 4, day: 1 }, "year"],
+  ])("throws for a non-integer CalendarDate component (%s)", (keyDate, field) => {
+    expect(() => getEdifactFormatVersion(keyDate)).toThrow(
+      new RegExp(`${field} must be an integer`)
+    );
+  });
+
+  it.each([
+    [{ year: 2024, month: 2, day: 29 }, EdifactFormatVersion.FV2310],
+    [{ year: 2028, month: 2, day: 29 }, EdifactFormatVersion.FV2704],
+  ])("still accepts a real leap day (%s)", (keyDate, expected) => {
+    // 2024 resolves to a *bounded* version, so this asserts more than "did not throw".
+    expect(getEdifactFormatVersion(keyDate)).toBe(expected);
+  });
+
+  it("treats a two-digit year literally rather than as 19xx", () => {
+    // The only test that catches reverting utcInstant to Date.UTC: Date.UTC(50, ...) means 1950,
+    // so the round-trip in assertRealCalendarDate would read back 1950, mismatch the requested
+    // year 50 and reject a legitimate date. The returned version is not what discriminates here
+    // (year 50 and 1950 both precede every threshold); that it resolves at all is.
+    expect(getEdifactFormatVersion({ year: 50, month: 4, day: 1 })).toBe(
+      EdifactFormatVersion.FV2104
+    );
+  });
+
+  it.each([
+    ["year 0", { year: 0, month: 1, day: 1 }],
+    ["a negative year", { year: -1, month: 1, day: 1 }],
+    ["year 10000", { year: 10000, month: 1, day: 1 }],
+    ["a far-future year", { year: 100000, month: 1, day: 1 }],
+  ])("throws for %s, outside python's datetime.date range", (_label, keyDate) => {
+    // These used to resolve - { year: 100000 } returned the newest format version, the saturation
+    // answer standing in for "your input was nonsense".
+    expect(() => getEdifactFormatVersion(keyDate)).toThrow(/year must be between 1 and 9999/);
+  });
+
+  it.each([null, undefined, 42, "2027-04-01", true])(
+    "throws a message about the expected shape for %s",
+    (keyDate) => {
+      // A JS caller has no compiler; the message used to name an internal field
+      // ("Cannot read properties of null (reading 'year')").
+      expect(() => getEdifactFormatVersion(keyDate as unknown as CalendarDate)).toThrow(
+        /expected a Date or a CalendarDate/
+      );
+    }
+  );
+
+  it("reads each CalendarDate component exactly once", () => {
+    // A getter returning different values across reads could otherwise pass validation and then
+    // be computed from a different date. Measured against the pre-fix commit, where day was read
+    // five times: a Proxy whose day getter returned 31 for the first three reads and 32 afterwards
+    // validated as 2027-03-31 (FV2610) and answered FV2704. Reading once removes the window
+    // rather than widening it, which is why this asserts the exact read sequence.
+    const reads: string[] = [];
+    const counting = {
+      get year(): number {
+        reads.push("year");
+        return 2024;
+      },
+      get month(): number {
+        reads.push("month");
+        return 2;
+      },
+      get day(): number {
+        reads.push("day");
+        return 1;
+      },
+    };
+    expect(getEdifactFormatVersion(counting)).toBe(EdifactFormatVersion.FV2310);
+    expect(reads).toEqual(["year", "month", "day"]);
+  });
+
+  // Factories, not values: vitest's %s interpolation inspects the argument, and loupe calls
+  // toJSON on anything tagged "[object Date]", which these spoofs do not have.
+  it.each([
+    ["no getTime", (): object => ({ [Symbol.toStringTag]: "Date" })],
+    [
+      "a callable getTime",
+      (): object => ({ [Symbol.toStringTag]: "Date", getTime: (): number => 0 }),
+    ],
+    [
+      "getTime and valueOf",
+      (): object => ({
+        [Symbol.toStringTag]: "Date",
+        getTime: (): number => 0,
+        valueOf: (): number => 0,
+      }),
+    ],
+    ["Date.prototype but no [[DateValue]] slot", (): object => Object.create(Date.prototype)],
+  ])("does not mistake a Date-like spoof with %s for a Date", (_label, makeSpoof) => {
+    // Two earlier attempts at this predicate both failed. The object tag is spoofable via
+    // Symbol.toStringTag: with no getTime, such a value reached keyDate.getTime() and raised a
+    // raw "TypeError: getTime is not a function"; with a callable getTime it was treated as a
+    // Date outright, and since `<` then falls back to valueOf and coerces to strings, a spoof
+    // reporting 1970 answered FV2704 instead of FV2104 - the original saturation bug, reborn.
+    // Only the [[DateValue]] internal slot is a real brand.
+    expect(() => getEdifactFormatVersion(makeSpoof() as unknown as CalendarDate)).toThrow(
+      /year must be an integer/
+    );
+  });
+
+  it("throws for an Invalid Date whose getTime reports a valid time", () => {
+    // Pins dateTime inside the Invalid-Date guard: with keyDate.getTime() there, this instance
+    // reports 0, passes the guard, and then saturates on the real NaN further down.
+    class LyingInvalidDate extends Date {
+      override getTime(): number {
+        return 0;
+      }
+    }
+    expect(() => getEdifactFormatVersion(new LyingInvalidDate(NaN))).toThrow(/Invalid Date/);
+  });
+
+  it("reads the time through Date.prototype, ignoring an overridden getTime", () => {
+    // A Date subclass is a real Date, so it is accepted - but what it reports about itself must
+    // not decide the answer: this instance claims 1970 while really being 2027-04-01.
+    class LyingDate extends Date {
+      override getTime(): number {
+        return 0;
+      }
+    }
+    const lying = new LyingDate("2027-04-01T00:00:00Z");
+    expect(lying.getTime()).toBe(0);
+    expect(getEdifactFormatVersion(lying)).toBe(EdifactFormatVersion.FV2704);
+  });
+
+  it("accepts a Date built in another realm", () => {
+    // instanceof Date is false across realms, which used to send a valid Date down the
+    // CalendarDate path and reject it with a message about calendar integers.
+    const crossRealmDate = runInNewContext('new Date("2024-01-01T00:00:00Z")') as Date;
+    expect(crossRealmDate instanceof Date).toBe(false);
+    expect(getEdifactFormatVersion(crossRealmDate)).toBe(EdifactFormatVersion.FV2310);
+  });
+});
+
+describe("getEdifactFormatVersionLabel for an unknown value", () => {
+  it.each(["toString", "constructor", "valueOf", "__proto__", "hasOwnProperty"])(
+    "throws for the inherited Object.prototype member %s",
+    (key) => {
+      // A Record lookup resolves inherited members, so these are not undefined: before the
+      // hasOwnProperty guard, label("toString") handed back a native function.
+      expect(() => getEdifactFormatVersionLabel(key as EdifactFormatVersion)).toThrow(
+        /No label is known/
+      );
+    }
+  );
+
+  it("throws a readable error for a symbol", () => {
+    // Implicit template coercion of a symbol raises "Cannot convert a Symbol value to a string",
+    // a raw TypeError saying nothing about the argument being an unknown format version.
+    expect(() =>
+      getEdifactFormatVersionLabel(Symbol("nope") as unknown as EdifactFormatVersion)
+    ).toThrow(/No label is known/);
+  });
+
+  it("throws instead of returning undefined", () => {
+    // The record lookup used to hand back undefined despite the declared string return type,
+    // which reaches a frontend as the literal text "undefined".
+    expect(() => getEdifactFormatVersionLabel("FV9999" as EdifactFormatVersion)).toThrow(
+      /No label is known/
+    );
   });
 });

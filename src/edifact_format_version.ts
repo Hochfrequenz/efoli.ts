@@ -21,12 +21,96 @@ export enum EdifactFormatVersion {
 export type CalendarDate = { year: number; month: number; day: number };
 
 /**
+ * Reads a Date's time through Date.prototype, so that an instance overriding getTime or valueOf
+ * cannot change what this module compares against the thresholds.
+ */
+function dateTime(value: Date): number {
+  return Date.prototype.getTime.call(value);
+}
+
+/**
+ * True only for a real Date, from any realm. Date.prototype.getTime throws unless the receiver
+ * carries the internal [[DateValue]] slot, which is exactly the brand we need:
+ * - `instanceof Date` is false for a Date built in another realm (a vm context, an iframe), which
+ *   would send a perfectly valid Date down the CalendarDate path.
+ * - The object tag is spoofable via Symbol.toStringTag, and a spoof that also defines a callable
+ *   getTime would be treated as a Date. It has no [[DateValue]] slot, so `<` against a threshold
+ *   falls back to valueOf and coerces both sides to strings: `{ getTime: () => 0 }` compared as
+ *   1970 answered FV2704 instead of FV2104. That is the original saturation bug, reintroduced.
+ */
+function isDate(value: unknown): value is Date {
+  try {
+    Date.prototype.getTime.call(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Builds a UTC instant from calendar components. Deliberately not Date.UTC, which maps years
+ * 0-99 to 1900-1999, so that a year like 50 would silently become 1950.
+ */
+function utcInstant(year: number, month: number, day: number, hour = 0): Date {
+  const instant = new Date(0);
+  instant.setUTCFullYear(year, month - 1, day);
+  instant.setUTCHours(hour, 0, 0, 0);
+  return instant;
+}
+
+/**
+ * Rejects a CalendarDate that does not denote a real date, so that malformed input cannot be
+ * silently normalized into a neighbouring month: month 13 would otherwise become January of the
+ * next year, and April 31st would become May 1st, each yielding a confident wrong format version.
+ * Unlike python's datetime.date, a CalendarDate is a plain object, so nothing but this check
+ * stands between a JSON.parse result and a wrong answer.
+ */
+function assertRealCalendarDate(date: CalendarDate): CalendarDate {
+  if (date === null || typeof date !== "object") {
+    throw new Error(`Invalid key date: expected a Date or a CalendarDate, got ${String(date)}`);
+  }
+  // Destructured once and validated as locals, then returned for the caller to use. Reading the
+  // properties again after validating them would let a getter-backed object (a Proxy, a reactive
+  // wrapper, a class computing day from mutable state) return one value to the check and another
+  // to the computation, so a validated date could still be turned into a different one.
+  const { year, month, day } = date;
+  for (const [name, value] of [
+    ["year", year],
+    ["month", month],
+    ["day", day],
+  ] as const) {
+    if (!Number.isInteger(value)) {
+      throw new Error(`Invalid CalendarDate: ${name} must be an integer, got ${String(value)}`);
+    }
+  }
+  // datetime.date in the python twin spans years 1-9999 (MINYEAR/MAXYEAR) and cannot hold
+  // anything outside, so reject the same range. Note this brings the two close but not level: the
+  // twin additionally raises OverflowError for 0001-01-01, because localizing it to Berlin shifts
+  // it below datetime's minimum. Without the bound, { year: 100000 } resolved to the newest format
+  // version - the saturation answer again standing in for "your input was nonsense". It also keeps
+  // every instant this function builds inside Date's range, including the hour-12 reference below.
+  if (year < 1 || year > 9999) {
+    throw new Error(`Invalid CalendarDate: year must be between 1 and 9999, got ${year}`);
+  }
+  const roundTripped = utcInstant(year, month, day);
+  if (
+    roundTripped.getUTCFullYear() !== year ||
+    roundTripped.getUTCMonth() + 1 !== month ||
+    roundTripped.getUTCDate() !== day
+  ) {
+    throw new Error(`Invalid CalendarDate: ${year}-${month}-${day} is not a real date`);
+  }
+  return { year, month, day };
+}
+
+/**
  * Converts a calendar date to the UTC timestamp of midnight Europe/Berlin on that date.
  * Uses Intl.DateTimeFormat to handle DST transitions correctly (no external deps required).
  */
 function calendarDateToBerlinMidnight(date: CalendarDate): Date {
+  const { year, month, day } = assertRealCalendarDate(date);
   // Use noon UTC as reference to determine the Berlin UTC offset on that date (avoids DST boundary issues)
-  const referenceUtc = new Date(Date.UTC(date.year, date.month - 1, date.day, 12, 0, 0));
+  const referenceUtc = utcInstant(year, month, day, 12);
   const berlinHour = parseInt(
     new Intl.DateTimeFormat("en-US", {
       timeZone: "Europe/Berlin",
@@ -37,7 +121,7 @@ function calendarDateToBerlinMidnight(date: CalendarDate): Date {
   );
   // At 12:00 UTC, Berlin shows 13 (CET/+1) or 14 (CEST/+2) — offset is berlinHour - 12
   const offsetHours = berlinHour - 12;
-  return new Date(Date.UTC(date.year, date.month - 1, date.day, 0, 0, 0) - offsetHours * 3_600_000);
+  return new Date(utcInstant(year, month, day).getTime() - offsetHours * 3_600_000);
 }
 
 /** Converts a UTC Date to the calendar date in Europe/Berlin timezone. */
@@ -96,6 +180,12 @@ export const FORMAT_VERSION_THRESHOLDS: FormatVersionThreshold[] = [...THRESHOLD
   (a, b) => a[0].getTime() - b[0].getTime()
 );
 
+// The same thresholds as numbers, so the lookup compares primitives and never relies on `<`
+// coercing a Date through valueOf.
+const THRESHOLD_TIMES: [number, EdifactFormatVersion][] = FORMAT_VERSION_THRESHOLDS.map(
+  ([threshold, version]) => [threshold.getTime(), version]
+);
+
 // Derives the inclusive Berlin start date for each version from the thresholds list, which is
 // sorted at its point of definition, so no local sorting here.
 // threshold[i] is the exclusive upper bound of version[i], so version[i+1] starts there.
@@ -131,8 +221,21 @@ const FORMAT_VERSION_LABELS: Record<EdifactFormatVersion, string> = {
   [EdifactFormatVersion.FV2704]: "April 2027",
 };
 
-/** Returns a human-readable German label for the given format version, e.g. "Oktober 2025 (FV2510)". */
+/**
+ * Returns a human-readable German label for the given format version, e.g. "Oktober 2025".
+ *
+ * A bare record lookup would hand back undefined despite the declared string return type, which
+ * reaches a frontend as the literal text "undefined".
+ *
+ * @throws if the value is not an EdifactFormatVersion member.
+ */
 export function getEdifactFormatVersionLabel(version: EdifactFormatVersion): string {
+  // hasOwnProperty, not `=== undefined`: FORMAT_VERSION_LABELS is an object literal, so a lookup
+  // of "toString" or "constructor" resolves an inherited Object.prototype member and is not
+  // undefined - a JS caller would get `function toString() { [native code] }` rendered as a label.
+  if (!Object.prototype.hasOwnProperty.call(FORMAT_VERSION_LABELS, version)) {
+    throw new Error(`No label is known for '${String(version)}'`);
+  }
   return FORMAT_VERSION_LABELS[version];
 }
 
@@ -144,11 +247,29 @@ export function getEdifactFormatVersionLabel(version: EdifactFormatVersion): str
  * library knows about, because the date at which that version will be superseded is not known yet.
  * This means an outdated efoli release reports its own newest version for key dates that actually
  * belong to a format version released after it. Update efoli to resolve such dates correctly.
+ * Note that this saturation applies only to dates that are themselves valid: an unrepresentable
+ * key date throws instead of borrowing that answer.
+ *
+ * @throws if the key date is an Invalid Date, or a CalendarDate whose components are not integers,
+ * whose year is outside 1-9999, or that does not denote a real date.
  */
 export function getEdifactFormatVersion(keyDate: Date | CalendarDate): EdifactFormatVersion {
-  const utcDate = keyDate instanceof Date ? keyDate : calendarDateToBerlinMidnight(keyDate);
-  for (const [threshold, version] of FORMAT_VERSION_THRESHOLDS) {
-    if (utcDate < threshold) {
+  // isDate works by catching a throw, so it is called once and the result reused: calling it
+  // twice built two exceptions for every CalendarDate input.
+  const keyDateIsDate = isDate(keyDate);
+  if (keyDateIsDate && Number.isNaN(dateTime(keyDate))) {
+    // An Invalid Date's time is NaN, and every `<` comparison against NaN is false, so without
+    // this guard the loop below falls through and returns the newest format version. That borrows
+    // the saturation answer, whose whole point is to mean "beyond what this release knows".
+    throw new Error("Invalid Date: the key date is not a valid point in time");
+  }
+  // Compared as numbers rather than as Dates: `<` on objects goes through valueOf, which an
+  // instance can override, and which silently coerces a non-Date to a string.
+  const utcTime = keyDateIsDate
+    ? dateTime(keyDate)
+    : dateTime(calendarDateToBerlinMidnight(keyDate));
+  for (const [thresholdTime, version] of THRESHOLD_TIMES) {
+    if (utcTime < thresholdTime) {
       return version;
     }
   }
@@ -168,7 +289,7 @@ export function getEdifactFormatVersionValidFrom(version: EdifactFormatVersion):
   const date = VALID_FROM_MAP.get(version);
   if (date === undefined) {
     throw new Error(
-      `Start date for ${version} is not known. Known versions: ${[...VALID_FROM_MAP.keys()].join(", ")}`
+      `Start date for ${String(version)} is not known. Known versions: ${[...VALID_FROM_MAP.keys()].join(", ")}`
     );
   }
   return date;
