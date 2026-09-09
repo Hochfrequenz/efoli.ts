@@ -21,6 +21,15 @@ export enum EdifactFormatVersion {
 export type CalendarDate = { year: number; month: number; day: number };
 
 /**
+ * True for a Date from any realm. `instanceof Date` is false for a Date built in another realm
+ * (a vm context, an iframe), which would send a perfectly valid Date down the CalendarDate path
+ * and reject it with a message about calendar integers.
+ */
+function isDate(value: unknown): value is Date {
+  return Object.prototype.toString.call(value) === "[object Date]";
+}
+
+/**
  * Builds a UTC instant from calendar components. Deliberately not Date.UTC, which maps years
  * 0-99 to 1900-1999, so that a year like 50 would silently become 1950.
  */
@@ -39,6 +48,9 @@ function utcInstant(year: number, month: number, day: number, hour = 0): Date {
  * stands between a JSON.parse result and a wrong answer.
  */
 function assertRealCalendarDate(date: CalendarDate): void {
+  if (date === null || typeof date !== "object") {
+    throw new Error(`Invalid key date: expected a Date or a CalendarDate, got ${String(date)}`);
+  }
   for (const [name, value] of [
     ["year", date.year],
     ["month", date.month],
@@ -47,6 +59,14 @@ function assertRealCalendarDate(date: CalendarDate): void {
     if (!Number.isInteger(value)) {
       throw new Error(`Invalid CalendarDate: ${name} must be an integer, got ${value}`);
     }
+  }
+  // datetime.date in the python twin spans years 1-9999 (MINYEAR/MAXYEAR) and cannot hold
+  // anything outside, so reject the same range: both twins then accept exactly the same dates.
+  // Without this, { year: 100000 } resolved to the newest format version - the saturation answer
+  // again standing in for "your input was nonsense". It also keeps every instant this function
+  // builds well inside Date's representable range, including the hour-12 reference below.
+  if (date.year < 1 || date.year > 9999) {
+    throw new Error(`Invalid CalendarDate: year must be between 1 and 9999, got ${date.year}`);
   }
   const roundTripped = utcInstant(date.year, date.month, date.day);
   if (
@@ -174,16 +194,19 @@ const FORMAT_VERSION_LABELS: Record<EdifactFormatVersion, string> = {
 
 /**
  * Returns a human-readable German label for the given format version, e.g. "Oktober 2025".
+ * @throws if the value is not an EdifactFormatVersion member.
  * Throws for a value that is not an EdifactFormatVersion member: the record lookup would
  * otherwise hand back undefined despite the declared string return type, which reaches a
  * frontend as the text "undefined".
  */
 export function getEdifactFormatVersionLabel(version: EdifactFormatVersion): string {
-  const label = FORMAT_VERSION_LABELS[version];
-  if (label === undefined) {
+  // hasOwnProperty, not `=== undefined`: FORMAT_VERSION_LABELS is an object literal, so a lookup
+  // of "toString" or "constructor" resolves an inherited Object.prototype member and is not
+  // undefined - a JS caller would get `function toString() { [native code] }` rendered as a label.
+  if (!Object.prototype.hasOwnProperty.call(FORMAT_VERSION_LABELS, version)) {
     throw new Error(`No label is known for '${version}'`);
   }
-  return label;
+  return FORMAT_VERSION_LABELS[version];
 }
 
 /**
@@ -194,15 +217,20 @@ export function getEdifactFormatVersionLabel(version: EdifactFormatVersion): str
  * library knows about, because the date at which that version will be superseded is not known yet.
  * This means an outdated efoli release reports its own newest version for key dates that actually
  * belong to a format version released after it. Update efoli to resolve such dates correctly.
+ * Note that this saturation applies only to dates that are themselves valid: an unrepresentable
+ * key date throws instead of borrowing that answer.
+ *
+ * @throws if the key date is an Invalid Date, or a CalendarDate whose components are not integers,
+ * whose year is outside 1-9999, or that does not denote a real date.
  */
 export function getEdifactFormatVersion(keyDate: Date | CalendarDate): EdifactFormatVersion {
-  if (keyDate instanceof Date && Number.isNaN(keyDate.getTime())) {
+  if (isDate(keyDate) && Number.isNaN(keyDate.getTime())) {
     // An Invalid Date's time is NaN, and every `<` comparison against NaN is false, so without
     // this guard the loop below falls through and returns the newest format version. That borrows
     // the saturation answer, whose whole point is to mean "beyond what this release knows".
     throw new Error("Invalid Date: the key date is not a valid point in time");
   }
-  const utcDate = keyDate instanceof Date ? keyDate : calendarDateToBerlinMidnight(keyDate);
+  const utcDate = isDate(keyDate) ? keyDate : calendarDateToBerlinMidnight(keyDate);
   for (const [threshold, version] of FORMAT_VERSION_THRESHOLDS) {
     if (utcDate < threshold) {
       return version;

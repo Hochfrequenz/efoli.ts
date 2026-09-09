@@ -1,3 +1,5 @@
+import { runInNewContext } from "node:vm";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -233,16 +235,58 @@ describe("rejecting key dates that cannot denote a real instant", () => {
   });
 
   it("treats a two-digit year literally rather than as 19xx", () => {
-    // Date.UTC(50, ...) means 1950; utcInstant means the year 50. Both land before every
-    // threshold, so this cannot distinguish them today - it pins that such a year resolves at all
-    // (rather than throwing) and documents the intent for whoever changes utcInstant later.
+    // The only test that catches reverting utcInstant to Date.UTC: Date.UTC(50, ...) means 1950,
+    // so the round-trip in assertRealCalendarDate would read back 1950, mismatch the requested
+    // year 50 and reject a legitimate date. The returned version is not what discriminates here
+    // (year 50 and 1950 both precede every threshold); that it resolves at all is.
     expect(getEdifactFormatVersion({ year: 50, month: 4, day: 1 })).toBe(
       EdifactFormatVersion.FV2104
     );
   });
+
+  it.each([
+    [{ year: 0, month: 1, day: 1 }, "year 0"],
+    [{ year: -1, month: 1, day: 1 }, "negative year"],
+    [{ year: 10000, month: 1, day: 1 }, "year 10000"],
+    [{ year: 100000, month: 1, day: 1 }, "far-future year"],
+  ])("throws for a year outside python's datetime.date range (%s)", (keyDate) => {
+    // These used to resolve - { year: 100000 } returned the newest format version, the saturation
+    // answer standing in for "your input was nonsense".
+    expect(() => getEdifactFormatVersion(keyDate)).toThrow(/year must be between 1 and 9999/);
+  });
+
+  it.each([null, undefined, 42, "2027-04-01", true])(
+    "throws a message about the expected shape for %s",
+    (keyDate) => {
+      // A JS caller has no compiler; the message used to name an internal field
+      // ("Cannot read properties of null (reading 'year')").
+      expect(() => getEdifactFormatVersion(keyDate as unknown as CalendarDate)).toThrow(
+        /expected a Date or a CalendarDate/
+      );
+    }
+  );
+
+  it("accepts a Date built in another realm", () => {
+    // instanceof Date is false across realms, which used to send a valid Date down the
+    // CalendarDate path and reject it with a message about calendar integers.
+    const crossRealmDate = runInNewContext('new Date("2024-01-01T00:00:00Z")') as Date;
+    expect(crossRealmDate instanceof Date).toBe(false);
+    expect(getEdifactFormatVersion(crossRealmDate)).toBe(EdifactFormatVersion.FV2310);
+  });
 });
 
 describe("getEdifactFormatVersionLabel for an unknown value", () => {
+  it.each(["toString", "constructor", "valueOf", "__proto__", "hasOwnProperty"])(
+    "throws for the inherited Object.prototype member %s",
+    (key) => {
+      // A Record lookup resolves inherited members, so these are not undefined: before the
+      // hasOwnProperty guard, label("toString") handed back a native function.
+      expect(() => getEdifactFormatVersionLabel(key as EdifactFormatVersion)).toThrow(
+        /No label is known/
+      );
+    }
+  );
+
   it("throws instead of returning undefined", () => {
     // The record lookup used to hand back undefined despite the declared string return type,
     // which reaches a frontend as the literal text "undefined".

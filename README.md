@@ -55,6 +55,21 @@ const version2: EdifactFormatVersion = getEdifactFormatVersion({ year: 2025, mon
 const current: EdifactFormatVersion = getCurrentEdifactFormatVersion();
 ```
 
+### Validation
+
+`getEdifactFormatVersion` throws instead of guessing when the key date cannot denote a real instant:
+
+- an `Invalid Date`, e.g. `new Date("nonsense")` — this previously returned the _newest_ format version
+- a `CalendarDate` whose components are not integers, whose year lies outside 1–9999, or that is not
+  a real date (`{ month: 13 }`, April 31st, February 29th in a non-leap year) — these were previously
+  normalized into a neighbouring month, again yielding a plausible-looking wrong version
+
+`getEdifactFormatVersionLabel` and `getEdifactFormatVersionValidFrom` throw for a value that is not an
+`EdifactFormatVersion` member.
+
+The bounds match `datetime.date` in the [Python twin](https://github.com/Hochfrequenz/efoli.py), so
+both packages accept exactly the same dates.
+
 ## Setup for Local Development
 
 ```bash
