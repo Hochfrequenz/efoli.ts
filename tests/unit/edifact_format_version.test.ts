@@ -195,3 +195,59 @@ describe("enum and threshold invariants", () => {
     }
   });
 });
+
+describe("rejecting key dates that cannot denote a real instant", () => {
+  it("throws for an Invalid Date instead of saturating to the newest version", () => {
+    // The regression this guards: an Invalid Date's time is NaN, every `<` against NaN is false,
+    // so the threshold loop used to fall through and return the newest format version - borrowing
+    // the saturation answer, which is supposed to mean "beyond what this release knows".
+    expect(() => getEdifactFormatVersion(new Date("nonsense"))).toThrow(/Invalid Date/);
+    expect(() => getEdifactFormatVersion(new Date(NaN))).toThrow(/Invalid Date/);
+  });
+
+  it.each([
+    [{ year: 2027, month: 13, day: 1 }, "month 13 would normalize to January of the next year"],
+    [{ year: 2027, month: 4, day: 31 }, "April 31st would normalize to May 1st"],
+    [{ year: 2027, month: 0, day: 1 }, "month 0 would normalize to December of the previous year"],
+    [{ year: 2027, month: 4, day: 0 }, "day 0 would normalize to the last day of March"],
+    [{ year: 2027, month: 2, day: 29 }, "2027 is not a leap year"],
+  ])("throws for a CalendarDate that is not a real date (%s)", (keyDate) => {
+    expect(() => getEdifactFormatVersion(keyDate)).toThrow(/is not a real date/);
+  });
+
+  it.each([
+    [{ year: 2027, month: 4, day: NaN }, "day"],
+    [{ year: 2027, month: 4, day: 1.5 }, "day"],
+    [{ year: 2027, month: 4.5, day: 1 }, "month"],
+    [{ year: NaN, month: 4, day: 1 }, "year"],
+  ])("throws for a non-integer CalendarDate component (%s)", (keyDate, field) => {
+    expect(() => getEdifactFormatVersion(keyDate)).toThrow(
+      new RegExp(`${field} must be an integer`)
+    );
+  });
+
+  it("still accepts a real leap day", () => {
+    expect(getEdifactFormatVersion({ year: 2028, month: 2, day: 29 })).toBe(
+      EdifactFormatVersion.FV2704
+    );
+  });
+
+  it("treats a two-digit year literally rather than as 19xx", () => {
+    // Date.UTC(50, ...) means 1950; utcInstant means the year 50. Both land before every
+    // threshold, so this cannot distinguish them today - it pins that such a year resolves at all
+    // (rather than throwing) and documents the intent for whoever changes utcInstant later.
+    expect(getEdifactFormatVersion({ year: 50, month: 4, day: 1 })).toBe(
+      EdifactFormatVersion.FV2104
+    );
+  });
+});
+
+describe("getEdifactFormatVersionLabel for an unknown value", () => {
+  it("throws instead of returning undefined", () => {
+    // The record lookup used to hand back undefined despite the declared string return type,
+    // which reaches a frontend as the literal text "undefined".
+    expect(() => getEdifactFormatVersionLabel("FV9999" as EdifactFormatVersion)).toThrow(
+      /No label is known/
+    );
+  });
+});
