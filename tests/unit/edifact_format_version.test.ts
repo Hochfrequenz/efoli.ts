@@ -98,6 +98,14 @@ describe("getEdifactFormatVersionValidFrom", () => {
   it("throws for FV2104 (earliest version, no defined start date)", () => {
     expect(() => getEdifactFormatVersionValidFrom(EdifactFormatVersion.FV2104)).toThrow(Error);
   });
+
+  it("throws a readable error for a symbol", () => {
+    // Same coercion trap as the label lookup: interpolating a symbol raises "Cannot convert a
+    // Symbol value to a string" instead of naming the unknown format version.
+    expect(() =>
+      getEdifactFormatVersionValidFrom(Symbol("nope") as unknown as EdifactFormatVersion)
+    ).toThrow(/Start date for/);
+  });
 });
 
 describe("getCurrentEdifactFormatVersion", () => {
@@ -269,9 +277,11 @@ describe("rejecting key dates that cannot denote a real instant", () => {
   );
 
   it("reads each CalendarDate component exactly once", () => {
-    // A getter returning a different value on a second read could otherwise pass validation and
-    // then be computed from a different date. This mattered: before the read-once change, a Proxy
-    // whose day getter switched from 1 to 31 validated as Feb 1st and computed as Feb 31st.
+    // A getter returning different values across reads could otherwise pass validation and then
+    // be computed from a different date. Measured against the pre-fix commit, where day was read
+    // five times: a Proxy whose day getter returned 31 for the first three reads and 32 afterwards
+    // validated as 2027-03-31 (FV2610) and answered FV2704. Reading once removes the window
+    // rather than widening it, which is why this asserts the exact read sequence.
     const reads: string[] = [];
     const counting = {
       get year(): number {

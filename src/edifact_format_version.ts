@@ -223,10 +223,11 @@ const FORMAT_VERSION_LABELS: Record<EdifactFormatVersion, string> = {
 
 /**
  * Returns a human-readable German label for the given format version, e.g. "Oktober 2025".
+ *
+ * A bare record lookup would hand back undefined despite the declared string return type, which
+ * reaches a frontend as the literal text "undefined".
+ *
  * @throws if the value is not an EdifactFormatVersion member.
- * Throws for a value that is not an EdifactFormatVersion member: the record lookup would
- * otherwise hand back undefined despite the declared string return type, which reaches a
- * frontend as the text "undefined".
  */
 export function getEdifactFormatVersionLabel(version: EdifactFormatVersion): string {
   // hasOwnProperty, not `=== undefined`: FORMAT_VERSION_LABELS is an object literal, so a lookup

@@ -64,8 +64,8 @@ const current: EdifactFormatVersion = getCurrentEdifactFormatVersion();
 - a `CalendarDate` that is not a real date (`{ month: 13 }`, April 31st, February 29th in a
   non-leap year) or whose components are not integers — these were previously normalized into a
   neighbouring month, again yielding a plausible-looking wrong version
-- a `CalendarDate` whose year lies outside 1–9999. Such a year _is_ a real instant a JavaScript
-  `Date` can hold; it is rejected for parity with `datetime.date` in the
+- a `CalendarDate` whose year lies outside 1–9999. Such a year can still be a perfectly real
+  instant — `{ year: 100000 }` is one — so it is rejected for parity with `datetime.date` in the
   [Python twin](https://github.com/Hochfrequenz/efoli.py), whose `MINYEAR`/`MAXYEAR` are 1 and 9999
 - anything that is neither a `Date` nor an object, e.g. `null` or a string
 
