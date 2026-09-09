@@ -65,37 +65,42 @@ function utcInstant(year: number, month: number, day: number, hour = 0): Date {
  * Unlike python's datetime.date, a CalendarDate is a plain object, so nothing but this check
  * stands between a JSON.parse result and a wrong answer.
  */
-function assertRealCalendarDate(date: CalendarDate): void {
+function assertRealCalendarDate(date: CalendarDate): CalendarDate {
   if (date === null || typeof date !== "object") {
     throw new Error(`Invalid key date: expected a Date or a CalendarDate, got ${String(date)}`);
   }
+  // Destructured once and validated as locals, then returned for the caller to use. Reading the
+  // properties again after validating them would let a getter-backed object (a Proxy, a reactive
+  // wrapper, a class computing day from mutable state) return one value to the check and another
+  // to the computation, so a validated date could still be turned into a different one.
+  const { year, month, day } = date;
   for (const [name, value] of [
-    ["year", date.year],
-    ["month", date.month],
-    ["day", date.day],
+    ["year", year],
+    ["month", month],
+    ["day", day],
   ] as const) {
     if (!Number.isInteger(value)) {
-      throw new Error(`Invalid CalendarDate: ${name} must be an integer, got ${value}`);
+      throw new Error(`Invalid CalendarDate: ${name} must be an integer, got ${String(value)}`);
     }
   }
   // datetime.date in the python twin spans years 1-9999 (MINYEAR/MAXYEAR) and cannot hold
-  // anything outside, so reject the same range: both twins then accept exactly the same dates.
-  // Without this, { year: 100000 } resolved to the newest format version - the saturation answer
-  // again standing in for "your input was nonsense". It also keeps every instant this function
-  // builds well inside Date's representable range, including the hour-12 reference below.
-  if (date.year < 1 || date.year > 9999) {
-    throw new Error(`Invalid CalendarDate: year must be between 1 and 9999, got ${date.year}`);
+  // anything outside, so reject the same range. Note this brings the two close but not level: the
+  // twin additionally raises OverflowError for 0001-01-01, because localizing it to Berlin shifts
+  // it below datetime's minimum. Without the bound, { year: 100000 } resolved to the newest format
+  // version - the saturation answer again standing in for "your input was nonsense". It also keeps
+  // every instant this function builds inside Date's range, including the hour-12 reference below.
+  if (year < 1 || year > 9999) {
+    throw new Error(`Invalid CalendarDate: year must be between 1 and 9999, got ${year}`);
   }
-  const roundTripped = utcInstant(date.year, date.month, date.day);
+  const roundTripped = utcInstant(year, month, day);
   if (
-    roundTripped.getUTCFullYear() !== date.year ||
-    roundTripped.getUTCMonth() + 1 !== date.month ||
-    roundTripped.getUTCDate() !== date.day
+    roundTripped.getUTCFullYear() !== year ||
+    roundTripped.getUTCMonth() + 1 !== month ||
+    roundTripped.getUTCDate() !== day
   ) {
-    throw new Error(
-      `Invalid CalendarDate: ${date.year}-${date.month}-${date.day} is not a real date`
-    );
+    throw new Error(`Invalid CalendarDate: ${year}-${month}-${day} is not a real date`);
   }
+  return { year, month, day };
 }
 
 /**
@@ -103,9 +108,9 @@ function assertRealCalendarDate(date: CalendarDate): void {
  * Uses Intl.DateTimeFormat to handle DST transitions correctly (no external deps required).
  */
 function calendarDateToBerlinMidnight(date: CalendarDate): Date {
-  assertRealCalendarDate(date);
+  const { year, month, day } = assertRealCalendarDate(date);
   // Use noon UTC as reference to determine the Berlin UTC offset on that date (avoids DST boundary issues)
-  const referenceUtc = utcInstant(date.year, date.month, date.day, 12);
+  const referenceUtc = utcInstant(year, month, day, 12);
   const berlinHour = parseInt(
     new Intl.DateTimeFormat("en-US", {
       timeZone: "Europe/Berlin",
@@ -116,7 +121,7 @@ function calendarDateToBerlinMidnight(date: CalendarDate): Date {
   );
   // At 12:00 UTC, Berlin shows 13 (CET/+1) or 14 (CEST/+2) — offset is berlinHour - 12
   const offsetHours = berlinHour - 12;
-  return new Date(utcInstant(date.year, date.month, date.day).getTime() - offsetHours * 3_600_000);
+  return new Date(utcInstant(year, month, day).getTime() - offsetHours * 3_600_000);
 }
 
 /** Converts a UTC Date to the calendar date in Europe/Berlin timezone. */
@@ -175,6 +180,12 @@ export const FORMAT_VERSION_THRESHOLDS: FormatVersionThreshold[] = [...THRESHOLD
   (a, b) => a[0].getTime() - b[0].getTime()
 );
 
+// The same thresholds as numbers, so the lookup compares primitives and never relies on `<`
+// coercing a Date through valueOf.
+const THRESHOLD_TIMES: [number, EdifactFormatVersion][] = FORMAT_VERSION_THRESHOLDS.map(
+  ([threshold, version]) => [threshold.getTime(), version]
+);
+
 // Derives the inclusive Berlin start date for each version from the thresholds list, which is
 // sorted at its point of definition, so no local sorting here.
 // threshold[i] is the exclusive upper bound of version[i], so version[i+1] starts there.
@@ -222,7 +233,7 @@ export function getEdifactFormatVersionLabel(version: EdifactFormatVersion): str
   // of "toString" or "constructor" resolves an inherited Object.prototype member and is not
   // undefined - a JS caller would get `function toString() { [native code] }` rendered as a label.
   if (!Object.prototype.hasOwnProperty.call(FORMAT_VERSION_LABELS, version)) {
-    throw new Error(`No label is known for '${version}'`);
+    throw new Error(`No label is known for '${String(version)}'`);
   }
   return FORMAT_VERSION_LABELS[version];
 }
@@ -253,8 +264,8 @@ export function getEdifactFormatVersion(keyDate: Date | CalendarDate): EdifactFo
   const utcTime = isDate(keyDate)
     ? dateTime(keyDate)
     : dateTime(calendarDateToBerlinMidnight(keyDate));
-  for (const [threshold, version] of FORMAT_VERSION_THRESHOLDS) {
-    if (utcTime < dateTime(threshold)) {
+  for (const [thresholdTime, version] of THRESHOLD_TIMES) {
+    if (utcTime < thresholdTime) {
       return version;
     }
   }
@@ -274,7 +285,7 @@ export function getEdifactFormatVersionValidFrom(version: EdifactFormatVersion):
   const date = VALID_FROM_MAP.get(version);
   if (date === undefined) {
     throw new Error(
-      `Start date for ${version} is not known. Known versions: ${[...VALID_FROM_MAP.keys()].join(", ")}`
+      `Start date for ${String(version)} is not known. Known versions: ${[...VALID_FROM_MAP.keys()].join(", ")}`
     );
   }
   return date;

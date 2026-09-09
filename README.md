@@ -57,18 +57,25 @@ const current: EdifactFormatVersion = getCurrentEdifactFormatVersion();
 
 ### Validation
 
-`getEdifactFormatVersion` throws instead of guessing when the key date cannot denote a real instant:
+`getEdifactFormatVersion` throws rather than guessing:
 
-- an `Invalid Date`, e.g. `new Date("nonsense")` — this previously returned the _newest_ format version
-- a `CalendarDate` whose components are not integers, whose year lies outside 1–9999, or that is not
-  a real date (`{ month: 13 }`, April 31st, February 29th in a non-leap year) — these were previously
-  normalized into a neighbouring month, again yielding a plausible-looking wrong version
+- an `Invalid Date`, e.g. `new Date("nonsense")` — this previously returned the _newest_ format
+  version, borrowing the answer that means "beyond what this release knows"
+- a `CalendarDate` that is not a real date (`{ month: 13 }`, April 31st, February 29th in a
+  non-leap year) or whose components are not integers — these were previously normalized into a
+  neighbouring month, again yielding a plausible-looking wrong version
+- a `CalendarDate` whose year lies outside 1–9999. Such a year _is_ a real instant a JavaScript
+  `Date` can hold; it is rejected for parity with `datetime.date` in the
+  [Python twin](https://github.com/Hochfrequenz/efoli.py), whose `MINYEAR`/`MAXYEAR` are 1 and 9999
+- anything that is neither a `Date` nor an object, e.g. `null` or a string
 
-`getEdifactFormatVersionLabel` and `getEdifactFormatVersionValidFrom` throw for a value that is not an
-`EdifactFormatVersion` member.
+A `Date` is accepted across JavaScript's full range and is _not_ checked against those year bounds,
+so parity with the twin is close but not exact — the twin also rejects `0001-01-01`, because
+localizing it to Berlin shifts it below `datetime`'s minimum.
 
-The bounds match `datetime.date` in the [Python twin](https://github.com/Hochfrequenz/efoli.py), so
-both packages accept exactly the same dates.
+`getEdifactFormatVersionLabel` throws for a value that is not an `EdifactFormatVersion` member.
+`getEdifactFormatVersionValidFrom` does too — and additionally for `FV2104`, which is a real member
+but the earliest one, so no start date is known for it.
 
 ## Setup for Local Development
 
