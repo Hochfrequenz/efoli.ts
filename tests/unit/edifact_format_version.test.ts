@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   type CalendarDate,
   EdifactFormatVersion,
+  FORMAT_VERSION_THRESHOLDS,
   getCurrentEdifactFormatVersion,
   getEdifactFormatVersion,
   getEdifactFormatVersionLabel,
@@ -50,17 +51,33 @@ describe("getEdifactFormatVersion", () => {
     [new Date("2026-09-30T22:00:00Z"), EdifactFormatVersion.FV2610, "exact FV2610 threshold"],
     [new Date("2027-03-31T21:59:59Z"), EdifactFormatVersion.FV2610, "one second before FV2704"],
     [new Date("2027-03-31T22:00:00Z"), EdifactFormatVersion.FV2704, "exact FV2704 threshold"],
-    [{ year: 2027, month: 3, day: 31 }, EdifactFormatVersion.FV2610, "last day of FV2610"],
-    [{ year: 2027, month: 4, day: 1 }, EdifactFormatVersion.FV2704, "first day of FV2704"],
+    // The two rows below restate the requirement ("FV2704 starts on 2027-04-01") in local calendar
+    // terms, without the reader having to redo the MESZ arithmetic. They add no mutation coverage
+    // over the two UTC rows above: a whole date is localized to Berlin midnight, which at a
+    // threshold is that exact threshold instant.
+    [
+      { year: 2027, month: 3, day: 31 },
+      EdifactFormatVersion.FV2610,
+      "last day of FV2610 (documents 22:00Z)",
+    ],
+    [
+      { year: 2027, month: 4, day: 1 },
+      EdifactFormatVersion.FV2704,
+      "first day of FV2704 (documents 22:00Z)",
+    ],
   ])("returns %s for %s (%s)", (keyDate, expected) => {
     expect(getEdifactFormatVersion(keyDate)).toBe(expected);
   });
 
   it("saturates to the newest format version beyond the last known threshold", () => {
-    // Deliberately expressed via the last enum member instead of a literal: with a literal this
-    // assertion keeps passing after a new format version is added, while getEdifactFormatVersion
-    // would then wrongly return the second newest version for every future date.
-    const newest = ALL_VERSIONS[ALL_VERSIONS.length - 1];
+    // Deliberately expressed via the last enum member instead of a literal: a literal here would
+    // keep passing while getEdifactFormatVersion returns a *stale* hardcoded version, which is the
+    // regression this module's derived LATEST_FORMAT_VERSION exists to prevent.
+    // What this cannot catch is a hardcoded literal that happens to be correct today - it only
+    // fails once the next format version is added. Unlike python, TypeScript has no equivalent of
+    // patching the module-level constant, so "thresholds bound every format version except the
+    // newest" below covers the enum/threshold relationship from the other side instead.
+    const newest = ALL_VERSIONS.at(-1);
     expect(getEdifactFormatVersion(new Date("2050-10-01T00:00:00Z"))).toBe(newest);
     expect(getEdifactFormatVersion({ year: 2050, month: 10, day: 1 })).toBe(newest);
   });
@@ -131,12 +148,39 @@ describe("enum and threshold invariants", () => {
 
   it("declares the format versions in chronological order", () => {
     // Both the derived newest version and the derived start dates rely on the declaration order.
-    const startDates = ALL_VERSIONS.slice(1).map((version) => {
-      const { year, month, day } = getEdifactFormatVersionValidFrom(version);
-      return year * 10000 + month * 100 + day;
-    });
+    const startDates = ALL_VERSIONS.slice(1)
+      .map((version) => {
+        try {
+          const { year, month, day } = getEdifactFormatVersionValidFrom(version);
+          return year * 10000 + month * 100 + day;
+        } catch {
+          // A missing start date is reported by the test above; swallowing it here keeps this
+          // test's failure about the *order*, as its name promises.
+          return undefined;
+        }
+      })
+      .filter((date): date is number => date !== undefined);
     expect(startDates).toEqual([...startDates].sort((a, b) => a - b));
     expect(new Set(startDates).size).toBe(startDates.length);
+  });
+
+  it("thresholds bound every format version except the newest", () => {
+    // The invariant that lets LATEST_FORMAT_VERSION simply be the last enum member. Fails if a
+    // format version is added to the enum without giving its predecessor a threshold, or if a
+    // threshold is added for the newest version without adding its successor to the enum.
+    const boundedVersions = new Set(FORMAT_VERSION_THRESHOLDS.map(([, version]) => version));
+    const newest = ALL_VERSIONS.at(-1);
+    expect(boundedVersions.has(newest!)).toBe(false);
+    expect([...boundedVersions].sort()).toEqual(ALL_VERSIONS.filter((v) => v !== newest).sort());
+  });
+
+  it("orders the thresholds chronologically and uniquely", () => {
+    // getEdifactFormatVersion returns the first threshold the key date falls below, which is only
+    // the *closest* one if the list is ordered. The list is sorted at its point of definition;
+    // this fails if that sorting is removed and an entry is written out of order.
+    const instants = FORMAT_VERSION_THRESHOLDS.map(([threshold]) => threshold.getTime());
+    expect(instants).toEqual([...instants].sort((a, b) => a - b));
+    expect(new Set(instants).size).toBe(instants.length);
   });
 
   it("resolves each version's start date, and the day before it, to the expected version", () => {
@@ -149,7 +193,10 @@ describe("enum and threshold invariants", () => {
     });
   });
 
-  it("has a label for every format version", () => {
+  it("labels every format version as a month and a year", () => {
+    // Presence is already a compile error (FORMAT_VERSION_LABELS is a Record over the enum), so
+    // this is a *shape* guard: it catches a new label that is malformed, not one that is missing.
+    // It cannot catch a wrong month - the explicit rows above do that.
     for (const version of ALL_VERSIONS) {
       expect(getEdifactFormatVersionLabel(version)).toMatch(/^\S+ \d{4}$/);
     }

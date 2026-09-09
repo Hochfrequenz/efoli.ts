@@ -11,7 +11,10 @@ export enum EdifactFormatVersion {
   FV2604 = "FV2604", // valid from 2026-04-01 onwards
   FV2610 = "FV2610", // valid from 2026-10-01 onwards
   FV2704 = "FV2704", // valid from 2027-04-01 onwards
-  // whenever you add another value here, also add its threshold to FORMAT_VERSION_THRESHOLDS below
+  // Whenever you add another value here, add the upper threshold of its *predecessor* to
+  // FORMAT_VERSION_THRESHOLDS below - the new value is the one that intentionally has none.
+  // The values have to stay in chronological order; the "declares the format versions in
+  // chronological order" test guards that.
 }
 
 /** A calendar date without time, interpreted as midnight Europe/Berlin when comparing against thresholds. */
@@ -58,15 +61,17 @@ function utcToBerlinCalendarDate(utcDate: Date): CalendarDate {
 // FORMAT_VERSION_THRESHOLDS, because nobody knows yet when it will be superseded. Derived from the
 // enum instead of hardcoded, so that adding a format version stays a single edit: a hardcoded value
 // silently makes getEdifactFormatVersion return the *previous* version for every date beyond the
-// last threshold. String enums preserve declaration order in Object.values, and
-// "thresholds cover every version but the latest" pins the relationship between enum and thresholds.
+// last threshold. String enums emit forward mappings only, so Object.values preserves declaration
+// order. The test "thresholds bound every format version except the newest" pins the relationship
+// between the enum and the thresholds list.
 const ALL_FORMAT_VERSIONS = Object.values(EdifactFormatVersion);
-const LATEST_FORMAT_VERSION = ALL_FORMAT_VERSIONS[
-  ALL_FORMAT_VERSIONS.length - 1
-] as EdifactFormatVersion;
+const LATEST_FORMAT_VERSION = ALL_FORMAT_VERSIONS.at(-1)!;
 
-// Each entry is [exclusive upper threshold UTC, version valid below that threshold].
-const FORMAT_VERSION_THRESHOLDS: [Date, EdifactFormatVersion][] = [
+/** [exclusive upper threshold UTC, version valid below that threshold] */
+type FormatVersionThreshold = [Date, EdifactFormatVersion];
+
+// The thresholds as written: one per format version except the newest, which has no upper bound yet.
+const THRESHOLDS_AS_WRITTEN: FormatVersionThreshold[] = [
   [new Date("2021-09-30T22:00:00Z"), EdifactFormatVersion.FV2104],
   [new Date("2022-09-30T22:00:00Z"), EdifactFormatVersion.FV2110],
   [new Date("2023-03-31T22:00:00Z"), EdifactFormatVersion.FV2210],
@@ -81,7 +86,18 @@ const FORMAT_VERSION_THRESHOLDS: [Date, EdifactFormatVersion][] = [
   [new Date("2027-03-31T22:00:00Z"), EdifactFormatVersion.FV2610],
 ];
 
-// Derives the inclusive Berlin start date for each version from the thresholds list.
+// Sorted once, here, so that every reader can rely on chronological order: getEdifactFormatVersion
+// returns the first threshold the key date falls below, which is only the *closest* one if the list
+// is ordered. Sorting at the single point of definition means a new entry written in the wrong place
+// cannot produce wrong format versions.
+// Exported for the tests only, deliberately not re-exported from index.ts: the invariants that tie
+// this list to the enum cannot be checked through the public API alone.
+export const FORMAT_VERSION_THRESHOLDS: FormatVersionThreshold[] = [...THRESHOLDS_AS_WRITTEN].sort(
+  (a, b) => a[0].getTime() - b[0].getTime()
+);
+
+// Derives the inclusive Berlin start date for each version from the thresholds list, which is
+// sorted at its point of definition, so no local sorting here.
 // threshold[i] is the exclusive upper bound of version[i], so version[i+1] starts there.
 // The latest version (the fallback) starts at the last threshold.
 const VALID_FROM_MAP: Map<EdifactFormatVersion, CalendarDate> = (() => {
@@ -123,6 +139,11 @@ export function getEdifactFormatVersionLabel(version: EdifactFormatVersion): str
 /**
  * Returns the EdifactFormatVersion applicable for the given key date.
  * Accepts a UTC Date (compared as-is) or a CalendarDate (treated as midnight Europe/Berlin).
+ *
+ * Note that any key date beyond the last known threshold returns the newest format version this
+ * library knows about, because the date at which that version will be superseded is not known yet.
+ * This means an outdated efoli release reports its own newest version for key dates that actually
+ * belong to a format version released after it. Update efoli to resolve such dates correctly.
  */
 export function getEdifactFormatVersion(keyDate: Date | CalendarDate): EdifactFormatVersion {
   const utcDate = keyDate instanceof Date ? keyDate : calendarDateToBerlinMidnight(keyDate);
