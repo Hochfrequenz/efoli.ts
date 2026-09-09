@@ -253,7 +253,10 @@ export function getEdifactFormatVersionLabel(version: EdifactFormatVersion): str
  * whose year is outside 1-9999, or that does not denote a real date.
  */
 export function getEdifactFormatVersion(keyDate: Date | CalendarDate): EdifactFormatVersion {
-  if (isDate(keyDate) && Number.isNaN(dateTime(keyDate))) {
+  // isDate works by catching a throw, so it is called once and the result reused: calling it
+  // twice built two exceptions for every CalendarDate input.
+  const keyDateIsDate = isDate(keyDate);
+  if (keyDateIsDate && Number.isNaN(dateTime(keyDate))) {
     // An Invalid Date's time is NaN, and every `<` comparison against NaN is false, so without
     // this guard the loop below falls through and returns the newest format version. That borrows
     // the saturation answer, whose whole point is to mean "beyond what this release knows".
@@ -261,7 +264,7 @@ export function getEdifactFormatVersion(keyDate: Date | CalendarDate): EdifactFo
   }
   // Compared as numbers rather than as Dates: `<` on objects goes through valueOf, which an
   // instance can override, and which silently coerces a non-Date to a string.
-  const utcTime = isDate(keyDate)
+  const utcTime = keyDateIsDate
     ? dateTime(keyDate)
     : dateTime(calendarDateToBerlinMidnight(keyDate));
   for (const [thresholdTime, version] of THRESHOLD_TIMES) {
