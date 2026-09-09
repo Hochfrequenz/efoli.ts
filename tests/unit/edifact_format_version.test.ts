@@ -52,19 +52,12 @@ describe("getEdifactFormatVersion", () => {
     [new Date("2027-03-31T21:59:59Z"), EdifactFormatVersion.FV2610, "one second before FV2704"],
     [new Date("2027-03-31T22:00:00Z"), EdifactFormatVersion.FV2704, "exact FV2704 threshold"],
     // The two rows below restate the requirement ("FV2704 starts on 2027-04-01") in local calendar
-    // terms, without the reader having to redo the MESZ arithmetic. They add no mutation coverage
-    // over the two UTC rows above: a whole date is localized to Berlin midnight, which at a
-    // threshold is that exact threshold instant.
-    [
-      { year: 2027, month: 3, day: 31 },
-      EdifactFormatVersion.FV2610,
-      "last day of FV2610 (documents 22:00Z)",
-    ],
-    [
-      { year: 2027, month: 4, day: 1 },
-      EdifactFormatVersion.FV2704,
-      "first day of FV2704 (documents 22:00Z)",
-    ],
+    // terms, so that a reader need not redo the MESZ arithmetic. Neither adds mutation coverage
+    // over the two UTC rows above: { 2027, 4, 1 } is localized to exactly the 22:00Z threshold,
+    // and { 2027, 3, 31 } to a full day below it, well inside the range the 21:59:59Z row already
+    // pins. While every threshold sits at Berlin midnight, no date-only row can be load-bearing.
+    [{ year: 2027, month: 3, day: 31 }, EdifactFormatVersion.FV2610, "last day of FV2610 (date)"],
+    [{ year: 2027, month: 4, day: 1 }, EdifactFormatVersion.FV2704, "first day of FV2704 (date)"],
   ])("returns %s for %s (%s)", (keyDate, expected) => {
     expect(getEdifactFormatVersion(keyDate)).toBe(expected);
   });
