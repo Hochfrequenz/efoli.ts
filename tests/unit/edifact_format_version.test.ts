@@ -266,6 +266,15 @@ describe("rejecting key dates that cannot denote a real instant", () => {
     }
   );
 
+  it("does not mistake a Symbol.toStringTag spoof for a Date", () => {
+    // Object.prototype.toString can be spoofed, and such an object used to reach
+    // keyDate.getTime() and raise "TypeError: keyDate.getTime is not a function", bypassing
+    // every validation message here.
+    const spoof = { [Symbol.toStringTag]: "Date" } as unknown as CalendarDate;
+    expect(Object.prototype.toString.call(spoof)).toBe("[object Date]");
+    expect(() => getEdifactFormatVersion(spoof)).toThrow(/year must be an integer/);
+  });
+
   it("accepts a Date built in another realm", () => {
     // instanceof Date is false across realms, which used to send a valid Date down the
     // CalendarDate path and reject it with a message about calendar integers.

@@ -24,9 +24,17 @@ export type CalendarDate = { year: number; month: number; day: number };
  * True for a Date from any realm. `instanceof Date` is false for a Date built in another realm
  * (a vm context, an iframe), which would send a perfectly valid Date down the CalendarDate path
  * and reject it with a message about calendar integers.
+ *
+ * The object tag alone is not enough: `Symbol.toStringTag` can spoof it, and such an object would
+ * then reach `keyDate.getTime()` and raise `TypeError: keyDate.getTime is not a function`,
+ * bypassing the validation messages below. Requiring a callable getTime keeps a spoof on the
+ * CalendarDate path, where it is reported like any other malformed input.
  */
 function isDate(value: unknown): value is Date {
-  return Object.prototype.toString.call(value) === "[object Date]";
+  return (
+    Object.prototype.toString.call(value) === "[object Date]" &&
+    typeof (value as Date).getTime === "function"
+  );
 }
 
 /**
