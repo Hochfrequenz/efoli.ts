@@ -10,7 +10,6 @@ export enum EdifactFormatVersion {
   FV2510 = "FV2510", // valid from 2025-10-01 onwards
   FV2604 = "FV2604", // valid from 2026-04-01 onwards
   FV2610 = "FV2610", // valid from 2026-10-01 onwards
-  FV2704 = "FV2704", // valid from 2027-04-01 onwards
   // Whenever you add another value here, add the upper threshold of its *predecessor* to
   // FORMAT_VERSION_THRESHOLDS below - the new value is the one that intentionally has none.
   // The values have to stay in chronological order; the "declares the format versions in
@@ -36,7 +35,7 @@ function dateTime(value: Date): number {
  * - The object tag is spoofable via Symbol.toStringTag, and a spoof that also defines a callable
  *   getTime would be treated as a Date. It has no [[DateValue]] slot, so `<` against a threshold
  *   falls back to valueOf and coerces both sides to strings: `{ getTime: () => 0 }` compared as
- *   1970 answered FV2704 instead of FV2104. That is the original saturation bug, reintroduced.
+ *   1970 answered FV2610 instead of FV2104. That is the original saturation bug, reintroduced.
  */
 function isDate(value: unknown): value is Date {
   try {
@@ -166,8 +165,6 @@ const THRESHOLDS_AS_WRITTEN: FormatVersionThreshold[] = [
   [new Date("2025-09-30T22:00:00Z"), EdifactFormatVersion.FV2504],
   [new Date("2026-03-31T22:00:00Z"), EdifactFormatVersion.FV2510],
   [new Date("2026-09-30T22:00:00Z"), EdifactFormatVersion.FV2604],
-  // 2027-04-01T00:00+02:00 (MESZ; German DST starts 2027-03-28) === 2027-03-31T22:00Z
-  [new Date("2027-03-31T22:00:00Z"), EdifactFormatVersion.FV2610],
 ];
 
 // Sorted once, here, so that every reader can rely on chronological order: getEdifactFormatVersion
@@ -218,7 +215,6 @@ const FORMAT_VERSION_LABELS: Record<EdifactFormatVersion, string> = {
   [EdifactFormatVersion.FV2510]: "Oktober 2025",
   [EdifactFormatVersion.FV2604]: "April 2026",
   [EdifactFormatVersion.FV2610]: "Oktober 2026",
-  [EdifactFormatVersion.FV2704]: "April 2027",
 };
 
 /**
