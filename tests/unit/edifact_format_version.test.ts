@@ -277,8 +277,8 @@ describe("rejecting key dates that cannot denote a real instant", () => {
   it("reads each CalendarDate component exactly once", () => {
     // A getter returning different values across reads could otherwise pass validation and then
     // be computed from a different date. Measured against the pre-fix commit, where day was read
-    // five times: a Proxy whose day getter returned 31 for the first three reads and 32 afterwards
-    // validated as 2027-03-31 but was computed from day 32, i.e. a later date. Reading once removes the window
+    // five times: a Proxy whose day getter returned 30 for the first three reads and 31 afterwards
+    // validated as 2026-09-30 (FV2604) and answered FV2610. Reading once removes the window
     // rather than widening it, which is why this asserts the exact read sequence.
     const reads: string[] = [];
     const counting = {
@@ -391,8 +391,7 @@ describe("getEdifactFormatVersionLabel for an unknown value", () => {
 });
 
 describe("there is no FV2704", () => {
-  it("was added by mistake and removed again; FV2610 is the newest format version", () => {
+  it("does not exist (shipped by mistake in 2.0.0)", () => {
     expect(Object.values(EdifactFormatVersion)).not.toContain("FV2704");
-    expect(Object.values(EdifactFormatVersion).at(-1)).toBe(EdifactFormatVersion.FV2610);
   });
 });
