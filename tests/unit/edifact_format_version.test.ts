@@ -51,15 +51,15 @@ describe("getEdifactFormatVersion", () => {
     [new Date("2026-03-31T22:00:00Z"), EdifactFormatVersion.FV2604, "exact FV2604 threshold"],
     [new Date("2026-09-30T21:59:59Z"), EdifactFormatVersion.FV2604, "one second before FV2610"],
     [new Date("2026-09-30T22:00:00Z"), EdifactFormatVersion.FV2610, "exact FV2610 threshold"],
-    [new Date("2027-03-31T21:59:59Z"), EdifactFormatVersion.FV2610, "one second before FV2704"],
-    [new Date("2027-03-31T22:00:00Z"), EdifactFormatVersion.FV2704, "exact FV2704 threshold"],
-    // The two rows below restate the requirement ("FV2704 starts on 2027-04-01") in local calendar
-    // terms, so that a reader need not redo the MESZ arithmetic. Neither adds mutation coverage
-    // over the two UTC rows above: { 2027, 4, 1 } is localized to exactly the 22:00Z threshold,
-    // and { 2027, 3, 31 } to a full day below it, well inside the range the 21:59:59Z row already
-    // pins. While every threshold sits at Berlin midnight, no date-only row can be load-bearing.
-    [{ year: 2027, month: 3, day: 31 }, EdifactFormatVersion.FV2610, "last day of FV2610 (date)"],
-    [{ year: 2027, month: 4, day: 1 }, EdifactFormatVersion.FV2704, "first day of FV2704 (date)"],
+    // There is no FV2704: FV2610 is the newest known version and applies to every later key date.
+    [
+      new Date("2027-03-31T21:59:59Z"),
+      EdifactFormatVersion.FV2610,
+      "one second before 2027-04-01 Berlin",
+    ],
+    [new Date("2027-03-31T22:00:00Z"), EdifactFormatVersion.FV2610, "2027-04-01 Berlin, no FV2704"],
+    [{ year: 2027, month: 3, day: 31 }, EdifactFormatVersion.FV2610, "2027-03-31 (date)"],
+    [{ year: 2027, month: 4, day: 1 }, EdifactFormatVersion.FV2610, "2027-04-01 (date), no FV2704"],
   ])("returns %s for %s (%s)", (keyDate, expected) => {
     expect(getEdifactFormatVersion(keyDate)).toBe(expected);
   });
@@ -90,7 +90,6 @@ describe("getEdifactFormatVersionValidFrom", () => {
     [EdifactFormatVersion.FV2510, { year: 2025, month: 10, day: 1 }],
     [EdifactFormatVersion.FV2604, { year: 2026, month: 4, day: 1 }],
     [EdifactFormatVersion.FV2610, { year: 2026, month: 10, day: 1 }],
-    [EdifactFormatVersion.FV2704, { year: 2027, month: 4, day: 1 }],
   ])("returns correct start date for %s", (version, expected) => {
     expect(getEdifactFormatVersionValidFrom(version)).toEqual(expected);
   });
@@ -128,7 +127,6 @@ describe("getEdifactFormatVersionLabel", () => {
     [EdifactFormatVersion.FV2510, "Oktober 2025"],
     [EdifactFormatVersion.FV2604, "April 2026"],
     [EdifactFormatVersion.FV2610, "Oktober 2026"],
-    [EdifactFormatVersion.FV2704, "April 2027"],
   ])("returns correct label for %s", (version, expected) => {
     expect(getEdifactFormatVersionLabel(version)).toBe(expected);
   });
@@ -238,7 +236,7 @@ describe("rejecting key dates that cannot denote a real instant", () => {
 
   it.each([
     [{ year: 2024, month: 2, day: 29 }, EdifactFormatVersion.FV2310],
-    [{ year: 2028, month: 2, day: 29 }, EdifactFormatVersion.FV2704],
+    [{ year: 2028, month: 2, day: 29 }, EdifactFormatVersion.FV2610],
   ])("still accepts a real leap day (%s)", (keyDate, expected) => {
     // 2024 resolves to a *bounded* version, so this asserts more than "did not throw".
     expect(getEdifactFormatVersion(keyDate)).toBe(expected);
@@ -280,7 +278,7 @@ describe("rejecting key dates that cannot denote a real instant", () => {
     // A getter returning different values across reads could otherwise pass validation and then
     // be computed from a different date. Measured against the pre-fix commit, where day was read
     // five times: a Proxy whose day getter returned 31 for the first three reads and 32 afterwards
-    // validated as 2027-03-31 (FV2610) and answered FV2704. Reading once removes the window
+    // validated as 2027-03-31 but was computed from day 32, i.e. a later date. Reading once removes the window
     // rather than widening it, which is why this asserts the exact read sequence.
     const reads: string[] = [];
     const counting = {
@@ -323,7 +321,7 @@ describe("rejecting key dates that cannot denote a real instant", () => {
     // Symbol.toStringTag: with no getTime, such a value reached keyDate.getTime() and raised a
     // raw "TypeError: getTime is not a function"; with a callable getTime it was treated as a
     // Date outright, and since `<` then falls back to valueOf and coerces to strings, a spoof
-    // reporting 1970 answered FV2704 instead of FV2104 - the original saturation bug, reborn.
+    // reporting 1970 answered FV2610 instead of FV2104 - the original saturation bug, reborn.
     // Only the [[DateValue]] internal slot is a real brand.
     expect(() => getEdifactFormatVersion(makeSpoof() as unknown as CalendarDate)).toThrow(
       /year must be an integer/
@@ -351,7 +349,7 @@ describe("rejecting key dates that cannot denote a real instant", () => {
     }
     const lying = new LyingDate("2027-04-01T00:00:00Z");
     expect(lying.getTime()).toBe(0);
-    expect(getEdifactFormatVersion(lying)).toBe(EdifactFormatVersion.FV2704);
+    expect(getEdifactFormatVersion(lying)).toBe(EdifactFormatVersion.FV2610);
   });
 
   it("accepts a Date built in another realm", () => {
@@ -389,5 +387,12 @@ describe("getEdifactFormatVersionLabel for an unknown value", () => {
     expect(() => getEdifactFormatVersionLabel("FV9999" as EdifactFormatVersion)).toThrow(
       /No label is known/
     );
+  });
+});
+
+describe("there is no FV2704", () => {
+  it("was added by mistake and removed again; FV2610 is the newest format version", () => {
+    expect(Object.values(EdifactFormatVersion)).not.toContain("FV2704");
+    expect(Object.values(EdifactFormatVersion).at(-1)).toBe(EdifactFormatVersion.FV2610);
   });
 });
